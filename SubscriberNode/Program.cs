@@ -27,7 +27,7 @@ namespace SubscriberNode
                         var messageReceived = subSocket.ReceiveFrameString();
                         
                         Console.WriteLine($"[Subscriber {subscriberId}, Topic '{currentTopic}']: {messageReceived}");
-                    }
+                    } 
                 }
             }
             finally
