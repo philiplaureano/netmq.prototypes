@@ -1,4 +1,7 @@
 ﻿using System;
+using System.Threading.Tasks;
+using NetMQ;
+using NetMQ.Sockets;
 
 namespace ExperimentConsole
 {
@@ -8,7 +11,25 @@ namespace ExperimentConsole
     {
         static void Main(string[] args)
         {
-            Console.WriteLine("Hello World!");
+            Task.Run(() => StartProxy());
+
+            Console.WriteLine("Press ENTER to terminate the program");
+            Console.ReadLine();
+        }
+
+        private static void StartProxy()
+        {
+            using (var xpubSocket = new XPublisherSocket("@inproc://publisher"))
+            using (var xsubSocket = new XSubscriberSocket("@inproc://subscriber"))
+            {
+                Console.WriteLine("Intermediary started, and waiting for messages");
+
+                // proxy messages between frontend / backend
+                var proxy = new Proxy(xsubSocket, xpubSocket);
+
+                // blocks indefinitely
+                proxy.Start();
+            }
         }
     }
 }
