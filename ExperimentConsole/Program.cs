@@ -33,9 +33,10 @@ namespace ExperimentConsole
 
     public class Subscriber
     {
-        private readonly Action<string, IReceivingSocket> _receiveMessages;
-
-        public Subscriber(Action<string, IReceivingSocket> receiveMessages)
+        private readonly Action<string, Guid,IReceivingSocket> _receiveMessages;
+        private readonly Guid _subscriberId = Guid.NewGuid();
+        
+        public Subscriber(Action<string, Guid, IReceivingSocket> receiveMessages)
         {
             _receiveMessages = receiveMessages;
         }
@@ -51,7 +52,7 @@ namespace ExperimentConsole
                     subSocket.Subscribe(topic);
                 }
 
-                Console.WriteLine("Subscriber socket connecting...");
+                Console.WriteLine($"Subscriber '{_subscriberId}' connecting...");
 
                 while (true)
                 {
@@ -59,7 +60,7 @@ namespace ExperimentConsole
                         break;
 
                     var topic = subSocket.ReceiveFrameString();
-                    _receiveMessages(topic, subSocket);
+                    _receiveMessages(topic, _subscriberId, subSocket);
                 }
             }
 
@@ -86,18 +87,20 @@ namespace ExperimentConsole
             var publisher = new Publisher(eventTargetAddress);
 
             // Start listening for messages
-            var subscriber = new Subscriber(HandleMessages);
             var topics = new[] {"TopicA", "TopicB", "TopicC"};
-
-            var listenerTask = Task.Run(() => subscriber.Run(eventSourceAddress, topics, source.Token));
+            
+            CreateSubscriber(eventSourceAddress, "TopicA", source);
+            CreateSubscriber(eventSourceAddress, "TopicB", source);
+            CreateSubscriber(eventSourceAddress, "TopicC", source);
             
             Console.WriteLine("Press any key to start publishing the messages");
             Console.ReadKey();
 
+            var random = new Random();
             var tasks = new List<Task>();
             for (var i = 0; i < 1000; i++)
             {
-                var topic = "TopicB";
+                var topic = topics[random.Next(0,topics.Length)];
                
                 var message = $"Message{i:0000}";
                 var bytes = Encoding.UTF8.GetBytes(message);
@@ -112,12 +115,24 @@ namespace ExperimentConsole
             source.Cancel();
         }
 
-        private static void HandleMessages(string topic, IReceivingSocket socket)
+        private static Task CreateSubscriber(string eventSourceAddress, string topic, CancellationTokenSource source)
+        {
+            return CreateSubscriber(eventSourceAddress, new[] {topic}, source);
+        }
+        
+        private static Task CreateSubscriber(string eventSourceAddress, string[] topics, CancellationTokenSource source)
+        {
+            var subscriber = new Subscriber(HandleMessages);
+            var listenerTask = Task.Run(() => subscriber.Run(eventSourceAddress, topics, source.Token));
+            return listenerTask;
+        }
+
+        private static void HandleMessages(string topic, Guid subscriberId, IReceivingSocket socket)
         {
             var bytes = socket.ReceiveFrameBytes();
             var messageText = Encoding.UTF8.GetString(bytes);
 
-            Console.WriteLine($"[Topic: '{topic}' ] Message Received: {messageText}");
+            Console.WriteLine($"[SubscriberId {subscriberId}][Topic: '{topic}' ] Message Received: {messageText}");
         }
 
         private static void StartProxy()
