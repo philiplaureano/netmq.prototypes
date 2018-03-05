@@ -11,23 +11,25 @@ namespace ExperimentConsole
 {
     public class Publisher : IDisposable
     {
-        private PublisherSocket _pubSocket;
+        private readonly IOutgoingSocket _pubSocket;
 
         public Publisher(string publisherAddress)
         {
-            _pubSocket = new PublisherSocket(publisherAddress);
+            var pubSocket = new PublisherSocket(publisherAddress);
+            pubSocket.Options.SendHighWatermark = 1000;
+
+            _pubSocket = pubSocket;
         }
 
         public void Publish(string topic, byte[] message)
         {
-            _pubSocket.Options.SendHighWatermark = 1000;
             _pubSocket.SendMoreFrame(topic).SendFrame(message);
         }
 
         public void Dispose()
         {
-            _pubSocket?.Close();
-            _pubSocket?.Dispose();
+            var pubSocket = _pubSocket as IDisposable;            
+            pubSocket?.Dispose();
         }
     }
 
@@ -45,7 +47,7 @@ namespace ExperimentConsole
             CancellationToken token)
         {
             using (var subSocket = new SubscriberSocket(subscriberSocketAddress))
-            {
+            {                
                 subSocket.Options.ReceiveHighWatermark = 1000;
                 foreach (var topic in topics)
                 {
@@ -68,19 +70,27 @@ namespace ExperimentConsole
         }
     }
 
-    // Note: This is just a console app where I play around with
+    // Note: This is just a console app where I will play around with
     // some sample code. None of it is meant for production use.
     class Program
     {
         static void Main(string[] args)
         {
             var source = new CancellationTokenSource();
+            
+            // TODO: Create the dealer/router prototype here
+            // Note: Dealers are the clients; routers are the servers
+        }
 
-            Task.Run(() => StartProxy());
+        private static void RunXPubXSubDemo()
+        {
+            var source = new CancellationTokenSource();
+
+            Task.Run(() => StartProxy(), source.Token);
 
             Console.WriteLine("Press any key to start the subscriber");
             Console.ReadKey();
-            
+
             var eventTargetAddress = ">inproc://subscriber";
             var eventSourceAddress = ">inproc://publisher";
 
@@ -88,11 +98,11 @@ namespace ExperimentConsole
 
             // Start listening for messages
             var topics = new[] {"TopicA", "TopicB", "TopicC"};
-            
+
             CreateSubscriber(eventSourceAddress, "TopicA", source);
             CreateSubscriber(eventSourceAddress, "TopicB", source);
             CreateSubscriber(eventSourceAddress, "TopicC", source);
-            
+
             Console.WriteLine("Press any key to start publishing the messages");
             Console.ReadKey();
 
@@ -100,15 +110,15 @@ namespace ExperimentConsole
             var tasks = new List<Task>();
             for (var i = 0; i < 1000; i++)
             {
-                var topic = topics[random.Next(0,topics.Length)];
-               
+                var topic = topics[random.Next(0, topics.Length)];
+
                 var message = $"Message{i:0000}";
                 var bytes = Encoding.UTF8.GetBytes(message);
                 publisher.Publish(topic, bytes);
             }
 
             Task.WaitAll(tasks.ToArray());
-            
+
             Console.WriteLine("Press ENTER to terminate the program");
             Console.ReadLine();
 
