@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,16 +29,16 @@ namespace ExperimentConsole
 
         public void Dispose()
         {
-            var pubSocket = _pubSocket as IDisposable;            
+            var pubSocket = _pubSocket as IDisposable;
             pubSocket?.Dispose();
         }
     }
 
     public class Subscriber
     {
-        private readonly Action<string, Guid,IReceivingSocket> _receiveMessages;
+        private readonly Action<string, Guid, IReceivingSocket> _receiveMessages;
         private readonly Guid _subscriberId = Guid.NewGuid();
-        
+
         public Subscriber(Action<string, Guid, IReceivingSocket> receiveMessages)
         {
             _receiveMessages = receiveMessages;
@@ -47,7 +48,7 @@ namespace ExperimentConsole
             CancellationToken token)
         {
             using (var subSocket = new SubscriberSocket(subscriberSocketAddress))
-            {                
+            {
                 subSocket.Options.ReceiveHighWatermark = 1000;
                 foreach (var topic in topics)
                 {
@@ -70,6 +71,127 @@ namespace ExperimentConsole
         }
     }
 
+    public class Dealer : IDisposable
+    {
+        private DealerSocket _dealerSocket;
+        private readonly Action<string, IReceivingSocket> _receiveReady;
+        private readonly NetMQPoller _poller = new NetMQPoller();
+        private readonly string _identity;
+        private readonly string _socketAddress;
+
+        public Dealer(string identity, string socketAddress, Action<string, IReceivingSocket> receiveReady)
+        {
+            _receiveReady = receiveReady;
+            _identity = identity;
+            _socketAddress = socketAddress;
+        }
+
+        public void SendMessage(byte[] messageBytes)
+        {
+            if (_dealerSocket == null)
+            {
+                InitializeSocket();
+                _dealerSocket.Connect(_socketAddress);
+            }
+
+            // The first frame must be empty,
+            // followed by the message itself
+            _dealerSocket.SendMoreFrameEmpty()
+                .SendFrame(messageBytes);
+        }
+
+        private void InitializeSocket()
+        {
+            if (_dealerSocket != null)
+                return;
+
+            _dealerSocket = new DealerSocket();
+            _dealerSocket.Options.Identity = Encoding.UTF8.GetBytes(_identity);
+            _dealerSocket.ReceiveReady += OnReceiveReady;
+
+            _poller.Add(_dealerSocket);
+            _poller.RunAsync();
+        }
+
+        private void OnReceiveReady(object sender, NetMQSocketEventArgs e)
+        {
+            var socket = e.Socket;
+
+            // Discard the whole message if the first frame isn't empty
+            var firstFrame = socket?.ReceiveFrameBytes();
+            if (firstFrame?.Length != 0)
+                return;
+
+            // Pass the remaining message to the application
+            _receiveReady(_identity, socket);
+        }
+
+        public void Dispose()
+        {
+            _dealerSocket?.Dispose();
+            _poller?.Dispose();
+        }
+    }
+
+    public class Router : IDisposable
+    {
+        private readonly string _identity;
+        private readonly Action<string, string, byte[], Action<byte[]>> _handleRequest;
+        private readonly RouterSocket _routerSocket;
+
+        public Router(string identity, string socketAddress,
+            Action<string, string, byte[], Action<byte[]>> handleRequest)
+        {
+            _identity = identity;
+            _handleRequest = handleRequest;
+            _routerSocket = new RouterSocket(socketAddress);
+        }
+
+        public Task Run(CancellationToken token)
+        {
+            while (true)
+            {
+                if (token.IsCancellationRequested)
+                    break;
+
+                var clientMessage = _routerSocket.ReceiveMultipartMessage(3);
+                if (clientMessage.FrameCount < 3)
+                    continue;
+
+                // Call the handler and give it the option to send responses back
+                // to the client
+                var clientAddress = clientMessage[0].ConvertToString();
+                var originalMessage = clientMessage[2].ToByteArray();
+                Action<byte[]> sendResponse = bytes =>
+                {
+                    _routerSocket.SendMoreFrame(clientAddress)
+                        .SendMoreFrameEmpty().SendFrame(bytes);
+                };
+
+                _handleRequest?.Invoke(_identity, clientAddress, originalMessage, sendResponse);
+            }
+
+            return Task.FromResult(0);
+        }
+
+        public void Dispose()
+        {
+            _routerSocket?.Close();
+            _routerSocket?.Dispose();
+        }
+    }
+
+    public static class ArrayExtensions
+    {
+        public static TItem GetRandomElement<TItem>(this IEnumerable<TItem> items)
+        {
+            // var topic = topics[random.Next(0, topics.Length)];
+            var random = new Random();
+            var itemsAsArray = items.ToArray();
+
+            return itemsAsArray.Length == 0 ? default(TItem) : itemsAsArray[random.Next(0, itemsAsArray.Length)];
+        }
+    }
     // Note: This is just a console app where I will play around with
     // some sample code. None of it is meant for production use.
     class Program
@@ -77,9 +199,45 @@ namespace ExperimentConsole
         static void Main(string[] args)
         {
             var source = new CancellationTokenSource();
-            
-            // TODO: Create the dealer/router prototype here
+
             // Note: Dealers are the clients; routers are the servers
+            var serverAddress = "inproc://server";
+            Action<string, IReceivingSocket> receiveReady = (dealerId, dealerSocket) =>
+            {
+                var message = dealerSocket.ReceiveFrameBytes();
+                var messageText = Encoding.UTF8.GetString(message);
+
+                Console.WriteLine($"Message received from router '{dealerId}': {messageText}");
+            };
+
+            Action<string, string, byte[], Action<byte[]>> handleRequest =
+                (identity, sourceAddress, clientMessage, sendResponse) =>
+                {
+                    Console.WriteLine(
+                        $"Message received from dealer '{identity}': {Encoding.UTF8.GetString(clientMessage)}");
+                    sendResponse(Encoding.UTF8.GetBytes("Pong"));
+                };
+
+            var router = new Router(Guid.NewGuid().ToString(), serverAddress, handleRequest);
+            var routerTask = Task.Run(() => router.Run(source.Token), source.Token);
+
+            var dealers = new List<Dealer>();
+            for (var i = 0; i < 100; i++)
+            {
+                var dealer = new Dealer(Guid.NewGuid().ToString(), serverAddress, receiveReady);
+                dealers.Add(dealer);
+            }
+
+            for (var i = 0; i < 10; i++)
+            {
+                var dealer = dealers.GetRandomElement();
+                dealer.SendMessage(Encoding.UTF8.GetBytes($"Ping-{i}"));    
+            }            
+
+            Console.WriteLine("Press ENTER to terminate the program");
+            Console.ReadLine();
+
+            source.Cancel();
         }
 
         private static void RunXPubXSubDemo()
@@ -129,7 +287,7 @@ namespace ExperimentConsole
         {
             return CreateSubscriber(eventSourceAddress, new[] {topic}, source);
         }
-        
+
         private static Task CreateSubscriber(string eventSourceAddress, string[] topics, CancellationTokenSource source)
         {
             var subscriber = new Subscriber(HandleMessages);
