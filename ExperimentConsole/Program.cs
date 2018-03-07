@@ -9,6 +9,46 @@ using NetMQ.Sockets;
 
 namespace ExperimentConsole
 {
+    public class NetworkNode : IDisposable
+    {        
+        private Dealer _dealer;
+        private Router _router;
+        private Guid _dealerId = Guid.NewGuid();
+        private Guid _routerId = Guid.NewGuid();
+
+        public NetworkNode(string address)
+        {
+            _dealer = new Dealer(_dealer.ToString(), OnRemoteResponseReceived);
+            _router = new Router(_router.ToString(), address, OnClientRequestReceived);
+        }
+
+        public async Task Run(CancellationToken token)
+        {
+            await _router.Run(token);
+        }
+
+        protected void SendMessage(string socketAddress, byte[] messageBytes)
+        {
+            _dealer.SendMessage(socketAddress, messageBytes);
+        }
+        
+        private void OnClientRequestReceived(string clientId, string clientAddress, byte[] clientMessageBytes, Action<byte[]> sendResponse)
+        {            
+            // TODO: Process the client (dealer) requests here
+        }
+        
+        private void OnRemoteResponseReceived(string serverId, IReceivingSocket socket)
+        {
+            // TODO: Process the server (router) responses here
+        }
+
+        public void Dispose()
+        {
+            _dealer?.Dispose();
+            _router?.Dispose();
+        }
+    }
+
     // Note: This is just a console app where I will play around with
     // some sample code. None of it is meant for production use.
     class Program

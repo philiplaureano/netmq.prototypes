@@ -27,16 +27,21 @@ namespace ExperimentConsole
                 InitializeSocket();
             }
 
-            if (!_connectedAddresses.Contains(socketAddress))
-            {
-                _dealerSocket.Connect(socketAddress);
-                _connectedAddresses.Add(socketAddress);
-            }
+            Connect(socketAddress);
                         
             // The first frame must be empty,
             // followed by the message itself
             _dealerSocket.SendMoreFrameEmpty()
                 .SendFrame(messageBytes);
+        }
+
+        public void Connect(string socketAddress)
+        {
+            if (_connectedAddresses.Contains(socketAddress)) 
+                return;
+            
+            _dealerSocket.Connect(socketAddress);
+            _connectedAddresses.Add(socketAddress);
         }
 
         private void InitializeSocket()
