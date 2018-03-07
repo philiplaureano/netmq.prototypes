@@ -15,6 +15,11 @@ namespace ExperimentConsole
     {
         static void Main(string[] args)
         {
+            // TODO: Simulate a node with dealer (client) and router (server) sockets
+        }
+
+        private static void RunDealerRouterDemo()
+        {
             var source = new CancellationTokenSource();
 
             // Note: Dealers are the clients; routers are the servers
@@ -37,7 +42,7 @@ namespace ExperimentConsole
 
             var router = new Router(Guid.NewGuid().ToString(), serverAddress, handleRequest);
             var otherRouter = new Router(Guid.NewGuid().ToString(), "inproc://other-server", handleRequest);
-            
+
             var routerTasks = new Task[]
             {
                 Task.Run(() => router.Run(source.Token), source.Token),
@@ -54,9 +59,9 @@ namespace ExperimentConsole
             for (var i = 0; i < 10; i++)
             {
                 var dealer = dealers.GetRandomElement();
-                dealer.SendMessage(serverAddress, Encoding.UTF8.GetBytes($"Ping-{i}"));    
+                dealer.SendMessage(serverAddress, Encoding.UTF8.GetBytes($"Ping-{i}"));
                 dealer.SendMessage("inproc://other-server", Encoding.UTF8.GetBytes($"Pang-{i}"));
-            }            
+            }
 
             Console.WriteLine("Press ENTER to terminate the program");
             Console.ReadLine();
