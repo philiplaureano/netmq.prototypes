@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Threading;
@@ -13,23 +14,17 @@ namespace ExperimentConsole
     {
         private Dealer _dealer;
         private Router _router;
-        private Guid _dealerId = Guid.NewGuid();
         private Guid _routerId = Guid.NewGuid();
 
         public NetworkNode(string address)
         {
-            _dealer = new Dealer(_dealer.ToString(), OnRemoteResponseReceived);
+            //_dealer = new Dealer(_dealer.ToString(), OnRemoteResponseReceived);
             _router = new Router(_router.ToString(), address, OnClientRequestReceived);
         }
 
         public async Task Run(CancellationToken token)
         {
             await _router.Run(token);
-        }
-
-        protected void SendMessage(string socketAddress, byte[] messageBytes)
-        {
-            _dealer.SendMessage(socketAddress, messageBytes);
         }
 
         private void OnClientRequestReceived(string dealerId, string clientId,
@@ -47,7 +42,6 @@ namespace ExperimentConsole
 
         public void Dispose()
         {
-            _dealer?.Dispose();
             _router?.Dispose();
         }
     }
@@ -68,7 +62,7 @@ namespace ExperimentConsole
 
             // Note: Dealers are the clients; routers are the servers
             var serverAddress = "inproc://server";
-            Action<string, IReceivingSocket> receiveReady = (dealerId, dealerSocket) =>
+            Action<string, string, IReceivingSocket> receiveReady = (dealerId, socketAddress, dealerSocket) =>
             {
                 var message = dealerSocket.ReceiveFrameBytes();
                 var messageText = Encoding.UTF8.GetString(message);
@@ -103,8 +97,8 @@ namespace ExperimentConsole
             for (var i = 0; i < 10; i++)
             {
                 var dealer = dealers.GetRandomElement();
-                dealer.SendMessage(serverAddress, Encoding.UTF8.GetBytes($"Ping-{i}"));
-                dealer.SendMessage("inproc://other-server", Encoding.UTF8.GetBytes($"Pang-{i}"));
+                dealer.SendMessage(Encoding.UTF8.GetBytes($"Ping-{i}"));
+                dealer.SendMessage(Encoding.UTF8.GetBytes($"Pang-{i}"));
             }
 
             Console.WriteLine("Press ENTER to terminate the program");

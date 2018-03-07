@@ -9,25 +9,32 @@ namespace ExperimentConsole
     public class Dealer : IDisposable
     {
         private DealerSocket _dealerSocket;
-        private readonly Action<string, IReceivingSocket> _receiveReady;
+        private readonly Action<string, string, IReceivingSocket> _receiveReady;
         private readonly NetMQPoller _poller = new NetMQPoller();
         private readonly string _identity;
+        private readonly string _socketAddress;
         private readonly HashSet<string> _connectedAddresses = new HashSet<string>();
 
-        public Dealer(string identity, Action<string, IReceivingSocket> receiveReady)
+        public Dealer(string socketAddress, Action<string, string, IReceivingSocket> receiveReady)
+            : this(Guid.NewGuid().ToString(), socketAddress, receiveReady)
+        {
+        }
+
+        public Dealer(string identity, string socketAddress, Action<string, string, IReceivingSocket> receiveReady)
         {
             _receiveReady = receiveReady;
             _identity = identity;
+            _socketAddress = socketAddress;
         }
 
-        public void SendMessage(string socketAddress, byte[] messageBytes)
+        public void SendMessage(byte[] messageBytes)
         {
             if (_dealerSocket == null)
             {
                 InitializeSocket();
             }
 
-            Connect(socketAddress);
+            Connect(_socketAddress);
 
             // The first frame must be empty,
             // followed by the message itself
@@ -35,7 +42,9 @@ namespace ExperimentConsole
                 .SendFrame(messageBytes);
         }
 
-        public void Connect(string socketAddress)
+        public string Identity => _identity;
+
+        private void Connect(string socketAddress)
         {
             if (_connectedAddresses.Contains(socketAddress))
                 return;
@@ -67,7 +76,7 @@ namespace ExperimentConsole
                 return;
 
             // Pass the remaining message to the application
-            _receiveReady(firstFrame, socket);
+            _receiveReady(_identity, _socketAddress, socket);
         }
 
         public void Dispose()
