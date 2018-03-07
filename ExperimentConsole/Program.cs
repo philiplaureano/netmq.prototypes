@@ -77,23 +77,27 @@ namespace ExperimentConsole
         private readonly Action<string, IReceivingSocket> _receiveReady;
         private readonly NetMQPoller _poller = new NetMQPoller();
         private readonly string _identity;
-        private readonly string _socketAddress;
+        private readonly HashSet<string> _connectedAddresses = new HashSet<string>();
 
-        public Dealer(string identity, string socketAddress, Action<string, IReceivingSocket> receiveReady)
+        public Dealer(string identity, Action<string, IReceivingSocket> receiveReady)
         {
             _receiveReady = receiveReady;
             _identity = identity;
-            _socketAddress = socketAddress;
         }
 
-        public void SendMessage(byte[] messageBytes)
+        public void SendMessage(string socketAddress, byte[] messageBytes)
         {
             if (_dealerSocket == null)
             {
                 InitializeSocket();
-                _dealerSocket.Connect(_socketAddress);
             }
 
+            if (!_connectedAddresses.Contains(socketAddress))
+            {
+                _dealerSocket.Connect(socketAddress);
+                _connectedAddresses.Add(socketAddress);
+            }
+                        
             // The first frame must be empty,
             // followed by the message itself
             _dealerSocket.SendMoreFrameEmpty()
@@ -185,7 +189,6 @@ namespace ExperimentConsole
     {
         public static TItem GetRandomElement<TItem>(this IEnumerable<TItem> items)
         {
-            // var topic = topics[random.Next(0, topics.Length)];
             var random = new Random();
             var itemsAsArray = items.ToArray();
 
@@ -219,19 +222,26 @@ namespace ExperimentConsole
                 };
 
             var router = new Router(Guid.NewGuid().ToString(), serverAddress, handleRequest);
-            var routerTask = Task.Run(() => router.Run(source.Token), source.Token);
+            var otherRouter = new Router(Guid.NewGuid().ToString(), "inproc://other-server", handleRequest);
+            
+            var routerTasks = new Task[]
+            {
+                Task.Run(() => router.Run(source.Token), source.Token),
+                Task.Run(() => otherRouter.Run(source.Token), source.Token)
+            };
 
             var dealers = new List<Dealer>();
             for (var i = 0; i < 100; i++)
             {
-                var dealer = new Dealer(Guid.NewGuid().ToString(), serverAddress, receiveReady);
+                var dealer = new Dealer(Guid.NewGuid().ToString(), receiveReady);
                 dealers.Add(dealer);
             }
 
             for (var i = 0; i < 10; i++)
             {
                 var dealer = dealers.GetRandomElement();
-                dealer.SendMessage(Encoding.UTF8.GetBytes($"Ping-{i}"));    
+                dealer.SendMessage(serverAddress, Encoding.UTF8.GetBytes($"Ping-{i}"));    
+                dealer.SendMessage("inproc://other-server", Encoding.UTF8.GetBytes($"Pang-{i}"));
             }            
 
             Console.WriteLine("Press ENTER to terminate the program");
