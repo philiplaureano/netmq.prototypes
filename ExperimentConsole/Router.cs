@@ -9,6 +9,7 @@ namespace ExperimentConsole
     public class Router : IDisposable
     {
         private readonly string _identity;
+        private readonly string _socketAddress;
         private readonly Action<string, string, byte[], Action<byte[]>> _handleRequest;
         private readonly RouterSocket _routerSocket;
 
@@ -16,6 +17,7 @@ namespace ExperimentConsole
             Action<string, string, byte[], Action<byte[]>> handleRequest)
         {
             _identity = identity;
+            _socketAddress = socketAddress;
             _handleRequest = handleRequest;
             _routerSocket = new RouterSocket(socketAddress);
         }
@@ -33,15 +35,15 @@ namespace ExperimentConsole
 
                 // Call the handler and give it the option to send responses back
                 // to the client
-                var clientAddress = clientMessage[0].ConvertToString();
+                var clientId = clientMessage[0].ConvertToString();
                 var originalMessage = clientMessage[2].ToByteArray();
                 Action<byte[]> sendResponse = bytes =>
                 {
-                    _routerSocket.SendMoreFrame(clientAddress)
+                    _routerSocket.SendMoreFrame(clientId)
                         .SendMoreFrameEmpty().SendFrame(bytes);
                 };
 
-                _handleRequest?.Invoke(_identity, clientAddress, originalMessage, sendResponse);
+                _handleRequest?.Invoke(_identity, clientId, originalMessage, sendResponse);
             }
 
             return Task.FromResult(0);

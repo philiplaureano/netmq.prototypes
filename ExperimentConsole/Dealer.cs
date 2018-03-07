@@ -28,7 +28,7 @@ namespace ExperimentConsole
             }
 
             Connect(socketAddress);
-                        
+
             // The first frame must be empty,
             // followed by the message itself
             _dealerSocket.SendMoreFrameEmpty()
@@ -37,9 +37,9 @@ namespace ExperimentConsole
 
         public void Connect(string socketAddress)
         {
-            if (_connectedAddresses.Contains(socketAddress)) 
+            if (_connectedAddresses.Contains(socketAddress))
                 return;
-            
+
             _dealerSocket.Connect(socketAddress);
             _connectedAddresses.Add(socketAddress);
         }
@@ -62,12 +62,12 @@ namespace ExperimentConsole
             var socket = e.Socket;
 
             // Discard the whole message if the first frame isn't empty
-            var firstFrame = socket?.ReceiveFrameBytes();
+            var firstFrame = socket?.ReceiveFrameString();
             if (firstFrame?.Length != 0)
                 return;
 
             // Pass the remaining message to the application
-            _receiveReady(_identity, socket);
+            _receiveReady(firstFrame, socket);
         }
 
         public void Dispose()

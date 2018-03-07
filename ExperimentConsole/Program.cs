@@ -10,7 +10,7 @@ using NetMQ.Sockets;
 namespace ExperimentConsole
 {
     public class NetworkNode : IDisposable
-    {        
+    {
         private Dealer _dealer;
         private Router _router;
         private Guid _dealerId = Guid.NewGuid();
@@ -31,15 +31,18 @@ namespace ExperimentConsole
         {
             _dealer.SendMessage(socketAddress, messageBytes);
         }
-        
-        private void OnClientRequestReceived(string clientId, string clientAddress, byte[] clientMessageBytes, Action<byte[]> sendResponse)
-        {            
+
+        private void OnClientRequestReceived(string dealerId, string clientId,
+            byte[] clientMessageBytes, Action<byte[]> sendResponse)
+        {
             // TODO: Process the client (dealer) requests here
+            return;
         }
-        
+
         private void OnRemoteResponseReceived(string serverId, IReceivingSocket socket)
         {
             // TODO: Process the server (router) responses here
+            return;
         }
 
         public void Dispose()
@@ -56,6 +59,7 @@ namespace ExperimentConsole
         static void Main(string[] args)
         {
             // TODO: Simulate a node with dealer (client) and router (server) sockets
+            RunDealerRouterDemo();
         }
 
         private static void RunDealerRouterDemo()
@@ -73,7 +77,7 @@ namespace ExperimentConsole
             };
 
             Action<string, string, byte[], Action<byte[]>> handleRequest =
-                (identity, sourceAddress, clientMessage, sendResponse) =>
+                (identity, clientId, clientMessage, sendResponse) =>
                 {
                     Console.WriteLine(
                         $"Message received from dealer '{identity}': {Encoding.UTF8.GetString(clientMessage)}");
