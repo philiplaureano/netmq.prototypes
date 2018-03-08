@@ -17,6 +17,12 @@ namespace ExperimentConsole
         void SendMessage(object message);
     }
 
+    public interface ILinkedNode : INode
+    {
+        void Append(ILinkedNode newNode);
+        ILinkedNode NextNode { get; }
+    }
+
     public interface INetworkNode : INode
     {
         string Address { get; }
@@ -148,6 +154,11 @@ namespace ExperimentConsole
     {
         public void HandleMessage(object message, Action<string, byte[]> sendMessage)
         {
+            if (message is string msg)
+            {
+                Console.WriteLine($"'{msg}' message received");
+            }
+            
             if (message is PingMessage p)
             {
                 var serverId = p.TargetId;
@@ -182,7 +193,7 @@ namespace ExperimentConsole
         }
     }
 
-    public class InMemoryNode : INode
+    public class InMemoryNode : ILinkedNode
     {
         private readonly IMessageHandler _messageHandler;
         private readonly Func<byte[], object> _messageParser;
@@ -201,6 +212,17 @@ namespace ExperimentConsole
             _messageHandler?.HandleMessage(message, SendMessage);
         }
 
+        public void Append(ILinkedNode node)
+        {
+            if (NextNode != null)
+            {
+                NextNode.Append(node);
+                return;
+            }
+
+            NextNode = node;
+        }
+
         private void SendMessage(string targetId, byte[] messageBytes)
         {
             var message = _messageParser?.Invoke(messageBytes);
@@ -213,7 +235,7 @@ namespace ExperimentConsole
             NextNode?.SendMessage(message);
         }
 
-        public INode NextNode { get; set; }
+        public ILinkedNode NextNode { get; set; }
     }
 
     // Note: This is just a console app where I will play around with
@@ -223,6 +245,15 @@ namespace ExperimentConsole
         static void Main(string[] args)
         {
             // TODO: Add the in-memory transport node for the message handlers
+            
+            var node1 = new InMemoryNode(new PingPongActor(), Encoding.UTF8.GetString);
+            var node2 = new InMemoryNode(new PingPongActor(), Encoding.UTF8.GetString);
+            
+            node1.Append(node2);
+            node1.SendMessage(new PingMessage(node2.ID));
+            
+            Console.WriteLine("Press ENTER to terminate the program");
+            Console.ReadLine();
         }
 
         private static void RunNetworkNodeDemo()
