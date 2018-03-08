@@ -14,9 +14,9 @@ namespace ExperimentConsole
     public interface INode
     {
         string ID { get; }
-        void SendMessage(object message);        
+        void SendMessage(object message);
     }
-    
+
     public interface INetworkNode : INode
     {
         string Address { get; }
@@ -180,6 +180,40 @@ namespace ExperimentConsole
         {
             return new NetworkNode(address, handler.HandleMessage);
         }
+    }
+
+    public class InMemoryNode : INode
+    {
+        private readonly IMessageHandler _messageHandler;
+        private readonly Func<byte[], object> _messageParser;
+
+        public InMemoryNode(IMessageHandler messageHandler, Func<byte[], object> messageParser)
+        {
+            _messageHandler = messageHandler;
+            _messageParser = messageParser;
+            ID = Guid.NewGuid().ToString();
+        }
+
+        public string ID { get; }
+
+        public void SendMessage(object message)
+        {
+            _messageHandler?.HandleMessage(message, SendMessage);
+        }
+
+        private void SendMessage(string targetId, byte[] messageBytes)
+        {
+            var message = _messageParser?.Invoke(messageBytes);
+            if (targetId == ID)
+            {
+                SendMessage(message);
+                return;
+            }
+
+            NextNode?.SendMessage(message);
+        }
+
+        public INode NextNode { get; set; }
     }
 
     // Note: This is just a console app where I will play around with
