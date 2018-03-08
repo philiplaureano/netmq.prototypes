@@ -11,10 +11,15 @@ using NetMQ.Sockets;
 
 namespace ExperimentConsole
 {
-    public interface INetworkNode
+    public interface INode
+    {
+        string ID { get; }
+        void SendMessage(object message);        
+    }
+    
+    public interface INetworkNode : INode
     {
         string Address { get; }
-        string ID { get; }
     }
 
     public struct Request
@@ -171,7 +176,7 @@ namespace ExperimentConsole
 
     public static class MessageHandlerExtensions
     {
-        public static NetworkNode CreateNode(this IMessageHandler handler, string address)
+        public static NetworkNode CreateNetworkNode(this IMessageHandler handler, string address)
         {
             return new NetworkNode(address, handler.HandleMessage);
         }
@@ -183,10 +188,15 @@ namespace ExperimentConsole
     {
         static void Main(string[] args)
         {
+            // TODO: Add the in-memory transport node for the message handlers
+        }
+
+        private static void RunNetworkNodeDemo()
+        {
             var source = new CancellationTokenSource();
 
-            var node1 = (new PingPongActor()).CreateNode("inproc://node-1");
-            var node2 = (new PingPongActor()).CreateNode("inproc://node-2");
+            var node1 = (new PingPongActor()).CreateNetworkNode("inproc://node-1");
+            var node2 = (new PingPongActor()).CreateNetworkNode("inproc://node-2");
 
             var tasks = new Task[]
             {
@@ -198,59 +208,6 @@ namespace ExperimentConsole
 
             Console.WriteLine("Press ENTER to terminate the program");
             Console.ReadLine();
-        }
-
-
-        private static void RunDealerRouterDemo()
-        {
-            var source = new CancellationTokenSource();
-
-            // Note: Dealers are the clients; routers are the servers
-            var serverAddress = "inproc://server";
-            Action<string, string, IReceivingSocket> receiveReady = (dealerId, socketAddress, dealerSocket) =>
-            {
-                var message = dealerSocket.ReceiveFrameBytes();
-                var messageText = Encoding.UTF8.GetString(message);
-
-                Console.WriteLine($"Message received from router '{dealerId}': {messageText}");
-            };
-
-            Action<string, string, byte[]> handleRequest =
-                (identity, clientId, clientMessage) =>
-                {
-                    Console.WriteLine(
-                        $"Message received from dealer '{identity}': {Encoding.UTF8.GetString(clientMessage)}");
-
-                    // serverSocket.SendFrame(Encoding.UTF8.GetBytes("Pong"));
-                };
-
-            var router = new Router(Guid.NewGuid().ToString(), serverAddress, handleRequest);
-            var otherRouter = new Router(Guid.NewGuid().ToString(), "inproc://other-server", handleRequest);
-
-            var routerTasks = new Task[]
-            {
-                Task.Run(() => router.Run(source.Token), source.Token),
-                Task.Run(() => otherRouter.Run(source.Token), source.Token)
-            };
-
-            var dealers = new List<Dealer>();
-            for (var i = 0; i < 100; i++)
-            {
-                var dealer = new Dealer(Guid.NewGuid().ToString(), receiveReady);
-                dealers.Add(dealer);
-            }
-
-            for (var i = 0; i < 10; i++)
-            {
-                var dealer = dealers.GetRandomElement();
-                dealer.SendMessage(Encoding.UTF8.GetBytes($"Ping-{i}"));
-                dealer.SendMessage(Encoding.UTF8.GetBytes($"Pang-{i}"));
-            }
-
-            Console.WriteLine("Press ENTER to terminate the program");
-            Console.ReadLine();
-
-            source.Cancel();
         }
 
         private static void RunXPubXSubDemo()
