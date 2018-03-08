@@ -56,6 +56,9 @@ namespace ExperimentConsole
             _messageHandler = messageHandler;
             Address = address;
             _router = new Router(address, OnClientRequestReceived);
+
+            // Add the loopback dealer
+            _dealers[_router.Identity] = new Dealer(address, OnServerResponseReceived);
         }
 
         public async Task Run(CancellationToken token)
@@ -66,15 +69,23 @@ namespace ExperimentConsole
         public string Address { get; }
 
         public string ID => _router.Identity;
-        
+
         public void ConnectTo(INetworkNode otherNode)
         {
             if (otherNode.ID == this.ID)
                 throw new InvalidOperationException("A node cannot connect to itself.");
 
+            if (_dealers.ContainsKey(otherNode.ID))
+                return;
+
             var serverId = otherNode.ID;
             _dealers[serverId] = new Dealer(otherNode.Address, OnServerResponseReceived);
             _dealers[serverId].Connect();
+        }
+
+        public void SendMessage(object message)
+        {
+            _messageHandler?.Invoke(message, SendMessage);
         }
 
         private void SendMessage(string serverId, byte[] message)
@@ -113,15 +124,82 @@ namespace ExperimentConsole
         }
     }
 
+    public interface IMessageHandler
+    {
+        void HandleMessage(object message, Action<string, byte[]> sendMessage);
+    }
+
+    public struct PingMessage
+    {
+        public PingMessage(string targetId)
+        {
+            TargetId = targetId;
+        }
+
+        public string TargetId { get; }
+    }
+
+    public class PingPongActor : IMessageHandler
+    {
+        public void HandleMessage(object message, Action<string, byte[]> sendMessage)
+        {
+            if (message is PingMessage p)
+            {
+                var serverId = p.TargetId;
+                sendMessage(serverId, Encoding.UTF8.GetBytes("Ping"));
+            }
+
+            if (message is Response response)
+            {
+                var messageText = Encoding.UTF8.GetString(response.Bytes);
+                Console.WriteLine($"Message received from server '{response.ServerId}': {messageText}");
+            }
+
+            if (message is Request request)
+            {
+                var text = Encoding.UTF8.GetString(request.Bytes);
+                if (text != "Ping")
+                    return;
+
+                var serverId = request.ServerId;
+                sendMessage(serverId, Encoding.UTF8.GetBytes("Pong"));
+
+                Console.WriteLine($"Ping message received from client '{request.ClientId}'");
+            }
+        }
+    }
+
+    public static class MessageHandlerExtensions
+    {
+        public static NetworkNode CreateNode(this IMessageHandler handler, string address)
+        {
+            return new NetworkNode(address, handler.HandleMessage);
+        }
+    }
+
     // Note: This is just a console app where I will play around with
     // some sample code. None of it is meant for production use.
     class Program
     {
         static void Main(string[] args)
         {
-            // TODO: Simulate a node with dealer (client) and router (server) sockets
-            RunDealerRouterDemo();
+            var source = new CancellationTokenSource();
+
+            var node1 = (new PingPongActor()).CreateNode("inproc://node-1");
+            var node2 = (new PingPongActor()).CreateNode("inproc://node-2");
+
+            var tasks = new Task[]
+            {
+                Task.Run(() => node1.Run(source.Token), source.Token),
+                Task.Run(() => node2.Run(source.Token), source.Token)
+            };
+            node1.ConnectTo(node2);
+            node1.SendMessage(new PingMessage(node2.ID));
+
+            Console.WriteLine("Press ENTER to terminate the program");
+            Console.ReadLine();
         }
+
 
         private static void RunDealerRouterDemo()
         {

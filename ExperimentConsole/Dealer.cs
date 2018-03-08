@@ -30,9 +30,7 @@ namespace ExperimentConsole
         public void SendMessage(byte[] messageBytes)
         {
             if (_dealerSocket == null)
-            {
                 InitializeSocket();
-            }
 
             Connect(_socketAddress);
 
@@ -51,6 +49,9 @@ namespace ExperimentConsole
         
         private void Connect(string socketAddress)
         {
+            if (_dealerSocket == null)
+                InitializeSocket();
+            
             if (_connectedAddresses.Contains(socketAddress))
                 return;
 
