@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Runtime.InteropServices.ComTypes;
@@ -10,16 +11,51 @@ using NetMQ.Sockets;
 
 namespace ExperimentConsole
 {
-    public class NetworkNode : IDisposable
+    public interface INetworkNode
     {
-        private Dealer _dealer;
-        private Router _router;
-        private Guid _routerId = Guid.NewGuid();
+        string Address { get; }
+        string ID { get; }
+    }
 
-        public NetworkNode(string address)
+    public struct Request
+    {
+        public Request(string serverId, string clientId, byte[] bytes)
         {
-            //_dealer = new Dealer(_dealer.ToString(), OnRemoteResponseReceived);
-            _router = new Router(_router.ToString(), address, OnClientRequestReceived);
+            ServerId = serverId;
+            ClientId = clientId;
+            Bytes = bytes;
+        }
+
+        public string ServerId { get; }
+        public string ClientId { get; }
+        public byte[] Bytes { get; }
+    }
+
+    public struct Response
+    {
+        public Response(string serverId, string clientId, byte[] bytes)
+        {
+            ServerId = serverId;
+            ClientId = clientId;
+            Bytes = bytes;
+        }
+
+        public string ServerId { get; }
+        public string ClientId { get; }
+        public byte[] Bytes { get; }
+    }
+
+    public class NetworkNode : IDisposable, INetworkNode
+    {
+        private readonly Router _router;
+        private readonly Action<object, Action<string, byte[]>> _messageHandler;
+        private readonly ConcurrentDictionary<string, Dealer> _dealers = new ConcurrentDictionary<string, Dealer>();
+
+        public NetworkNode(string address, Action<object, Action<string, byte[]>> messageHandler)
+        {
+            _messageHandler = messageHandler;
+            Address = address;
+            _router = new Router(address, OnClientRequestReceived);
         }
 
         public async Task Run(CancellationToken token)
@@ -27,22 +63,53 @@ namespace ExperimentConsole
             await _router.Run(token);
         }
 
-        private void OnClientRequestReceived(string dealerId, string clientId,
-            byte[] clientMessageBytes, Action<byte[]> sendResponse)
+        public string Address { get; }
+
+        public string ID => _router.Identity;
+        
+        public void ConnectTo(INetworkNode otherNode)
         {
-            // TODO: Process the client (dealer) requests here
-            return;
+            if (otherNode.ID == this.ID)
+                throw new InvalidOperationException("A node cannot connect to itself.");
+
+            var serverId = otherNode.ID;
+            _dealers[serverId] = new Dealer(otherNode.Address, OnServerResponseReceived);
+            _dealers[serverId].Connect();
         }
 
-        private void OnRemoteResponseReceived(string serverId, IReceivingSocket socket)
+        private void SendMessage(string serverId, byte[] message)
         {
-            // TODO: Process the server (router) responses here
-            return;
+            if (!_dealers.ContainsKey(serverId))
+                throw new ArgumentException($"ServerId '{serverId}' not found");
+
+            var currentDealer = _dealers[serverId];
+            currentDealer.SendMessage(message);
+        }
+
+        private void OnClientRequestReceived(string serverId, string clientId,
+            byte[] clientMessageBytes)
+        {
+            var request = new Request(serverId, clientId, clientMessageBytes);
+
+            _messageHandler?.Invoke(request, SendMessage);
+        }
+
+        private void OnServerResponseReceived(string serverId, string clientId, IReceivingSocket socket)
+        {
+            var serverMessageBytes = socket.ReceiveFrameBytes();
+            var response = new Response(serverId, clientId, serverMessageBytes);
+
+            _messageHandler?.Invoke(response, SendMessage);
         }
 
         public void Dispose()
         {
             _router?.Dispose();
+
+            foreach (var dealer in _dealers.Values)
+            {
+                dealer.Dispose();
+            }
         }
     }
 
@@ -70,12 +137,13 @@ namespace ExperimentConsole
                 Console.WriteLine($"Message received from router '{dealerId}': {messageText}");
             };
 
-            Action<string, string, byte[], Action<byte[]>> handleRequest =
-                (identity, clientId, clientMessage, sendResponse) =>
+            Action<string, string, byte[]> handleRequest =
+                (identity, clientId, clientMessage) =>
                 {
                     Console.WriteLine(
                         $"Message received from dealer '{identity}': {Encoding.UTF8.GetString(clientMessage)}");
-                    sendResponse(Encoding.UTF8.GetBytes("Pong"));
+
+                    // serverSocket.SendFrame(Encoding.UTF8.GetBytes("Pong"));
                 };
 
             var router = new Router(Guid.NewGuid().ToString(), serverAddress, handleRequest);

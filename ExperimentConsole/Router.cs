@@ -10,11 +10,17 @@ namespace ExperimentConsole
     {
         private readonly string _identity;
         private readonly string _socketAddress;
-        private readonly Action<string, string, byte[], Action<byte[]>> _handleRequest;
+        private readonly Action<string, string, byte[]> _handleRequest;
         private readonly RouterSocket _routerSocket;
 
+        public Router(string socketAddress,
+            Action<string, string, byte[]> handleRequest)
+            : this(Guid.NewGuid().ToString(), socketAddress, handleRequest)
+        {
+        }
+
         public Router(string identity, string socketAddress,
-            Action<string, string, byte[], Action<byte[]>> handleRequest)
+            Action<string, string, byte[]> handleRequest)
         {
             _identity = identity;
             _socketAddress = socketAddress;
@@ -37,17 +43,14 @@ namespace ExperimentConsole
                 // to the client
                 var clientId = clientMessage[0].ConvertToString();
                 var originalMessage = clientMessage[2].ToByteArray();
-                Action<byte[]> sendResponse = bytes =>
-                {
-                    _routerSocket.SendMoreFrame(clientId)
-                        .SendMoreFrameEmpty().SendFrame(bytes);
-                };
 
-                _handleRequest?.Invoke(_identity, clientId, originalMessage, sendResponse);
+                _handleRequest?.Invoke(_identity, clientId, originalMessage);
             }
 
             return Task.FromResult(0);
         }
+
+        public string Identity => _identity;
 
         public void Dispose()
         {

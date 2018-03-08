@@ -44,6 +44,11 @@ namespace ExperimentConsole
 
         public string Identity => _identity;
 
+        public void Connect()
+        {
+            Connect(_socketAddress);
+        }
+        
         private void Connect(string socketAddress)
         {
             if (_connectedAddresses.Contains(socketAddress))
@@ -74,7 +79,7 @@ namespace ExperimentConsole
             var firstFrame = socket?.ReceiveFrameString();
             if (firstFrame?.Length != 0)
                 return;
-
+            
             // Pass the remaining message to the application
             _receiveReady(_identity, _socketAddress, socket);
         }
