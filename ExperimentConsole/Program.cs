@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Threading;
@@ -14,15 +15,8 @@ namespace ExperimentConsole
     public interface INode
     {
         string ID { get; }
-        void SendMessage(object message);
     }
-
-    public interface ILinkedNode : INode
-    {
-        void Append(ILinkedNode newNode);
-        ILinkedNode NextNode { get; }
-    }
-
+   
     public interface INetworkNode : INode
     {
         string Address { get; }
@@ -56,20 +50,16 @@ namespace ExperimentConsole
         public byte[] Bytes { get; }
     }
 
-    public class NetworkNode : IDisposable, INetworkNode
+    public class NetworkNode : IDisposable, INetworkNode, IMessageHandler
     {
         private readonly Router _router;
-        private readonly Action<object, Action<string, byte[]>> _messageHandler;
-        private readonly ConcurrentDictionary<string, Dealer> _dealers = new ConcurrentDictionary<string, Dealer>();
+        private readonly Action<object> _messageHandler;
 
-        public NetworkNode(string address, Action<object, Action<string, byte[]>> messageHandler)
+        public NetworkNode(string address, Action<object> messageHandler)
         {
             _messageHandler = messageHandler;
             Address = address;
             _router = new Router(address, OnClientRequestReceived);
-
-            // Add the loopback dealer
-            _dealers[_router.Identity] = new Dealer(address, OnServerResponseReceived);
         }
 
         public async Task Run(CancellationToken token)
@@ -81,31 +71,9 @@ namespace ExperimentConsole
 
         public string ID => _router.Identity;
 
-        public void ConnectTo(INetworkNode otherNode)
-        {
-            if (otherNode.ID == this.ID)
-                throw new InvalidOperationException("A node cannot connect to itself.");
-
-            if (_dealers.ContainsKey(otherNode.ID))
-                return;
-
-            var serverId = otherNode.ID;
-            _dealers[serverId] = new Dealer(otherNode.Address, OnServerResponseReceived);
-            _dealers[serverId].Connect();
-        }
-
         public void SendMessage(object message)
         {
-            _messageHandler?.Invoke(message, SendMessage);
-        }
-
-        private void SendMessage(string serverId, byte[] message)
-        {
-            if (!_dealers.ContainsKey(serverId))
-                throw new ArgumentException($"ServerId '{serverId}' not found");
-
-            var currentDealer = _dealers[serverId];
-            currentDealer.SendMessage(message);
+            _messageHandler?.Invoke(message);
         }
 
         private void OnClientRequestReceived(string serverId, string clientId,
@@ -113,31 +81,30 @@ namespace ExperimentConsole
         {
             var request = new Request(serverId, clientId, clientMessageBytes);
 
-            _messageHandler?.Invoke(request, SendMessage);
-        }
-
-        private void OnServerResponseReceived(string serverId, string clientId, IReceivingSocket socket)
-        {
-            var serverMessageBytes = socket.ReceiveFrameBytes();
-            var response = new Response(serverId, clientId, serverMessageBytes);
-
-            _messageHandler?.Invoke(response, SendMessage);
+            _messageHandler?.Invoke(request);
         }
 
         public void Dispose()
         {
             _router?.Dispose();
-
-            foreach (var dealer in _dealers.Values)
-            {
-                dealer.Dispose();
-            }
         }
     }
 
     public interface IMessageHandler
     {
-        void HandleMessage(object message, Action<string, byte[]> sendMessage);
+        void SendMessage(object message);
+    }
+
+    public struct Message
+    {
+        public Message(string targetId, byte[] bytes)
+        {
+            TargetId = targetId ?? throw new ArgumentNullException(nameof(targetId));
+            Bytes = bytes ?? throw new ArgumentNullException(nameof(bytes));
+        }
+
+        public string TargetId { get; }
+        public byte[] Bytes { get; }
     }
 
     public struct PingMessage
@@ -152,17 +119,25 @@ namespace ExperimentConsole
 
     public class PingPongActor : IMessageHandler
     {
-        public void HandleMessage(object message, Action<string, byte[]> sendMessage)
+        private readonly Action<object> _sendMessage;
+
+        public PingPongActor(Action<object> sendMessage)
+        {
+            _sendMessage = sendMessage;
+        }
+
+        public void SendMessage(object message)
         {
             if (message is string msg)
             {
                 Console.WriteLine($"'{msg}' message received");
             }
-            
+
             if (message is PingMessage p)
             {
                 var serverId = p.TargetId;
-                sendMessage(serverId, Encoding.UTF8.GetBytes("Ping"));
+                var serverMessage = new Message(serverId, Encoding.UTF8.GetBytes("Ping"));
+                _sendMessage?.Invoke(serverMessage);
             }
 
             if (message is Response response)
@@ -178,30 +153,20 @@ namespace ExperimentConsole
                     return;
 
                 var serverId = request.ServerId;
-                sendMessage(serverId, Encoding.UTF8.GetBytes("Pong"));
+                var serverMessage = new Message(serverId, Encoding.UTF8.GetBytes("Pong"));
+                _sendMessage?.Invoke(serverMessage);
 
                 Console.WriteLine($"Ping message received from client '{request.ClientId}'");
             }
         }
     }
-
-    public static class MessageHandlerExtensions
-    {
-        public static NetworkNode CreateNetworkNode(this IMessageHandler handler, string address)
-        {
-            return new NetworkNode(address, handler.HandleMessage);
-        }
-    }
-
-    public class InMemoryNode : ILinkedNode
+   
+    public class InMemoryNode : INode, IMessageHandler
     {
         private readonly IMessageHandler _messageHandler;
-        private readonly Func<byte[], object> _messageParser;
-
-        public InMemoryNode(IMessageHandler messageHandler, Func<byte[], object> messageParser)
+        public InMemoryNode(IMessageHandler messageHandler)
         {
             _messageHandler = messageHandler;
-            _messageParser = messageParser;
             ID = Guid.NewGuid().ToString();
         }
 
@@ -209,33 +174,8 @@ namespace ExperimentConsole
 
         public void SendMessage(object message)
         {
-            _messageHandler?.HandleMessage(message, SendMessage);
-        }
-
-        public void Append(ILinkedNode node)
-        {
-            if (NextNode != null)
-            {
-                NextNode.Append(node);
-                return;
-            }
-
-            NextNode = node;
-        }
-
-        private void SendMessage(string targetId, byte[] messageBytes)
-        {
-            var message = _messageParser?.Invoke(messageBytes);
-            if (targetId == ID)
-            {
-                SendMessage(message);
-                return;
-            }
-
-            NextNode?.SendMessage(message);
-        }
-
-        public ILinkedNode NextNode { get; set; }
+            _messageHandler?.SendMessage(message);
+        }        
     }
 
     // Note: This is just a console app where I will play around with
@@ -244,14 +184,28 @@ namespace ExperimentConsole
     {
         static void Main(string[] args)
         {
-            // TODO: Add the in-memory transport node for the message handlers
-            
-            var node1 = new InMemoryNode(new PingPongActor(), Encoding.UTF8.GetString);
-            var node2 = new InMemoryNode(new PingPongActor(), Encoding.UTF8.GetString);
-            
-            node1.Append(node2);
+            var nodes = new ConcurrentDictionary<string, IMessageHandler>();
+            Action<object> sendMessage = msg =>
+            {
+                if (!(msg is Message m))
+                    return;
+
+                var serverId = m.TargetId;
+                if (!nodes.ContainsKey(serverId))
+                    return;
+
+                var messageText = Encoding.UTF8.GetString(m.Bytes);
+                nodes[serverId]?.SendMessage(messageText);
+            };
+
+            var node1 = new InMemoryNode(new PingPongActor(sendMessage));
+            var node2 = new InMemoryNode(new PingPongActor(sendMessage));
+
+            nodes[node1.ID] = node1;
+            nodes[node2.ID] = node2;
+
             node1.SendMessage(new PingMessage(node2.ID));
-            
+
             Console.WriteLine("Press ENTER to terminate the program");
             Console.ReadLine();
         }
@@ -260,15 +214,55 @@ namespace ExperimentConsole
         {
             var source = new CancellationTokenSource();
 
-            var node1 = (new PingPongActor()).CreateNetworkNode("inproc://node-1");
-            var node2 = (new PingPongActor()).CreateNetworkNode("inproc://node-2");
+            var addresses = new ConcurrentDictionary<string, string>();
+            var dealers = new ConcurrentDictionary<string, Dealer>();
+            var handlers = new ConcurrentDictionary<string, IMessageHandler>();
+            
+            Action<object> sendMessage = msg =>
+            {
+                if (!(msg is Message m))
+                    return;
 
+                var serverId = m.TargetId;
+                if (!dealers.ContainsKey(serverId) && addresses.ContainsKey(serverId))
+                {
+                    var socketAddress = addresses[serverId];
+                    dealers[serverId] = new Dealer(socketAddress, (currentServerId, clientId, socket) =>
+                    {
+                        var serverMessageBytes = socket.ReceiveFrameBytes();
+                        var response = new Response(serverId, clientId, serverMessageBytes);
+
+                        if (!handlers.ContainsKey(serverId))
+                            return;
+                        
+                        handlers[serverId]?.SendMessage(response);
+                    });
+                }
+
+                if (!dealers.ContainsKey(serverId))
+                    return;
+                
+                dealers[serverId]?.SendMessage(m.Bytes);
+            };
+
+            var actor1 = new PingPongActor(sendMessage);
+            var actor2 = new PingPongActor(sendMessage);
+            
+            var node1 = new NetworkNode("inproc://node-1", actor1.SendMessage);
+            var node2 = new NetworkNode("inproc://node-2", actor2.SendMessage);
+
+            addresses[node1.ID] = node1.Address;
+            addresses[node2.ID] = node2.Address;
+
+            handlers[node1.ID] = actor1;
+            handlers[node2.ID] = actor2;
+            
             var tasks = new Task[]
             {
                 Task.Run(() => node1.Run(source.Token), source.Token),
                 Task.Run(() => node2.Run(source.Token), source.Token)
             };
-            node1.ConnectTo(node2);
+
             node1.SendMessage(new PingMessage(node2.ID));
 
             Console.WriteLine("Press ENTER to terminate the program");
